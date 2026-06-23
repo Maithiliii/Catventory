@@ -138,7 +138,9 @@ export default function LoginScreen({ navigation }: Props) {
           {/* Email */}
           <Text style={styles.label}>Email address</Text>
           <View style={styles.inputRow}>
-            <Text style={styles.inputIcon}>✉</Text>
+            <View style={styles.iconWrap}>
+              <Text style={styles.inputIcon}>✉</Text>
+            </View>
             <TextInput
               style={styles.textInput}
               placeholder="you@example.com"
@@ -257,7 +259,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     marginBottom: 12,
   },
-  inputIcon: { fontSize: 20, color: '#5B5B9E', marginRight: 8, lineHeight: 44 },
+  iconWrap: {
+    width: 16,
+    height: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  inputIcon: {
+    fontSize: 13,
+    color: '#5B5B9E',
+    includeFontPadding: false,
+    textAlignVertical: 'center',
+  },
   textInput: { flex: 1, fontSize: 14, color: '#2B2B6E' },
 
   primaryBtn: {

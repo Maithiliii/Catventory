@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -25,19 +25,45 @@ export default function LoginScreen({ navigation }: Props) {
   const [otpSent, setOtpSent] = useState(false);
   const [loadingSend, setLoadingSend] = useState(false);
   const [loadingVerify, setLoadingVerify] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
   const digitRefs = useRef<(TextInput | null)[]>([]);
+  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const otpFilled = otp.every(d => d !== '');
+  const canResend = otpSent && resendCooldown === 0;
+
+  useEffect(() => {
+    return () => {
+      if (cooldownRef.current) clearInterval(cooldownRef.current);
+    };
+  }, []);
+
+  function startCooldown() {
+    setResendCooldown(60);
+    cooldownRef.current = setInterval(() => {
+      setResendCooldown(prev => {
+        if (prev <= 1) {
+          clearInterval(cooldownRef.current!);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }
 
   async function sendOtp() {
     if (!email.trim()) return;
     setLoadingSend(true);
-    const { error } = await supabase.auth.signInWithOtp({ email: email.trim() });
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: { shouldCreateUser: true },
+    });
     setLoadingSend(false);
     if (error) {
       Alert.alert('Error', error.message);
     } else {
       setOtpSent(true);
+      startCooldown();
     }
   }
 
@@ -52,10 +78,9 @@ export default function LoginScreen({ navigation }: Props) {
     });
     setLoadingVerify(false);
     if (error) {
-      Alert.alert('Error', error.message);
+      Alert.alert('Invalid code', error.message);
       return;
     }
-    // Check if user already has a username
     if (data.user) {
       const { data: profile } = await supabase
         .from('users')
@@ -87,6 +112,7 @@ export default function LoginScreen({ navigation }: Props) {
   }
 
   function resendOtp() {
+    if (!canResend) return;
     setOtp(['', '', '', '', '', '']);
     sendOtp();
   }
@@ -96,14 +122,15 @@ export default function LoginScreen({ navigation }: Props) {
       style={styles.root}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        {/* Header */}
+
+        {/* Header — no bottom border radius so it flows into body */}
         <View style={styles.header}>
           <Text style={styles.headerEmoji}>🐱</Text>
           <Text style={styles.headerTitle}>Catventory</Text>
           <Text style={styles.headerSub}>collect every cat you meet</Text>
         </View>
 
-        {/* Body */}
+        {/* Body — no top border so it sits flush under the header */}
         <View style={styles.body}>
           <Text style={styles.welcome}>Welcome</Text>
           <Text style={styles.welcomeSub}>Enter your email to get started</Text>
@@ -132,7 +159,7 @@ export default function LoginScreen({ navigation }: Props) {
             {loadingSend ? (
               <ActivityIndicator color="#E8D8F0" />
             ) : (
-              <Text style={styles.primaryBtnText}>{otpSent ? 'OTP sent ✓' : 'Send OTP'}</Text>
+              <Text style={styles.primaryBtnText}>{otpSent ? 'OTP sent' : 'Send OTP'}</Text>
             )}
           </TouchableOpacity>
 
@@ -175,8 +202,10 @@ export default function LoginScreen({ navigation }: Props) {
 
           <View style={styles.resendRow}>
             <Text style={styles.resendText}>Didn't get it? </Text>
-            <TouchableOpacity onPress={resendOtp}>
-              <Text style={styles.resendLink}>Resend</Text>
+            <TouchableOpacity onPress={resendOtp} disabled={!canResend}>
+              <Text style={[styles.resendLink, !canResend && styles.resendLinkDisabled]}>
+                {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -192,9 +221,10 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: '#2B2B6E',
     borderRadius: 20,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     paddingVertical: 40,
     alignItems: 'center',
-    marginBottom: 0,
   },
   headerEmoji: { fontSize: 52, marginBottom: 8 },
   headerTitle: { fontSize: 26, fontWeight: '500', color: '#E8D8F0', letterSpacing: -0.5 },
@@ -202,11 +232,12 @@ const styles = StyleSheet.create({
 
   body: {
     backgroundColor: '#F5F0F8',
-    borderWidth: 0.5,
+    borderLeftWidth: 0.5,
+    borderRightWidth: 0.5,
+    borderBottomWidth: 0.5,
     borderColor: '#D4B8D0',
-    borderRadius: 20,
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
     padding: 24,
   },
 
@@ -226,7 +257,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     marginBottom: 12,
   },
-  inputIcon: { fontSize: 16, color: '#5B5B9E', marginRight: 8 },
+  inputIcon: { fontSize: 20, color: '#5B5B9E', marginRight: 8, lineHeight: 44 },
   textInput: { flex: 1, fontSize: 14, color: '#2B2B6E' },
 
   primaryBtn: {
@@ -277,4 +308,5 @@ const styles = StyleSheet.create({
   resendRow: { flexDirection: 'row', justifyContent: 'center' },
   resendText: { fontSize: 12, color: '#6B6B9E' },
   resendLink: { fontSize: 12, color: '#5B5B9E', fontWeight: '500' },
+  resendLinkDisabled: { color: '#BBAED0' },
 });

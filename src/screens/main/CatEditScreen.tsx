@@ -18,6 +18,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import { ChevronLeft, Lock, MapPin, Map, Camera } from 'lucide-react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@env';
 import { supabase } from '../../lib/supabase';
 import type { Cat, CollectionStackParamList } from '../../types';
 
@@ -93,11 +94,23 @@ export default function CatEditScreen({ navigation, route }: Props) {
   async function uploadPhoto(localUri: string, catId: string): Promise<string> {
     const path = `cats/${catId}`;
     const blob = await readAsBlob(localUri);
-    const { error } = await supabase.storage
-      .from('cat-photos')
-      .upload(path, blob, { contentType: 'image/jpeg', upsert: true });
-    if (error) throw new Error(error.message);
-    return supabase.storage.from('cat-photos').getPublicUrl(path).data.publicUrl;
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token ?? SUPABASE_ANON_KEY;
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(`${xhr.status}: ${xhr.responseText}`));
+      };
+      xhr.onerror = () => reject(new Error('Network error during upload'));
+      xhr.open('POST', `${SUPABASE_URL}/storage/v1/object/cat-photos/${path}`, true);
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.setRequestHeader('apikey', SUPABASE_ANON_KEY);
+      xhr.setRequestHeader('Content-Type', 'image/jpeg');
+      xhr.setRequestHeader('x-upsert', 'true');
+      xhr.send(blob);
+    });
+    return `${SUPABASE_URL}/storage/v1/object/public/cat-photos/${path}`;
   }
 
   function isLocalUri(uri: string) {

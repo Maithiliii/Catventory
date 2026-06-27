@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View, Image } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { supabase } from '../lib/supabase';
 import LoginScreen from '../screens/auth/LoginScreen';
@@ -31,8 +31,11 @@ export default function AppNavigator() {
 
   if (!initialRoute) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#5e3620' }}>
-        <ActivityIndicator color="#fff9e8" size="large" />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#faf2e2' }}>
+        <Image
+          source={require('../../assets/Logo.png')}
+          style={{ width: 160, height: 160, resizeMode: 'contain' }}
+        />
       </View>
     );
   }

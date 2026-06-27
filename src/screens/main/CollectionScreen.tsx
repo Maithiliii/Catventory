@@ -12,10 +12,19 @@ import {
 import { launchImageLibrary } from 'react-native-image-picker';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Image as ImageIcon, Map, Pencil, Clock, MapPin } from 'lucide-react-native';
+import { MAPBOX_PUBLIC_TOKEN } from '@env';
 import { supabase } from '../../lib/supabase';
 import type { Cat, CollectionStackParamList } from '../../types';
 
 type NavProp = NativeStackNavigationProp<CollectionStackParamList, 'CollectionList'>;
+
+function formatCoords(lat?: number, lng?: number) {
+  if (lat == null || lng == null) return 'Unknown location';
+  const latStr = `${Math.abs(lat).toFixed(2)}°${lat >= 0 ? 'N' : 'S'}`;
+  const lngStr = `${Math.abs(lng).toFixed(2)}°${lng >= 0 ? 'E' : 'W'}`;
+  return `${latStr}, ${lngStr}`;
+}
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -30,13 +39,33 @@ function formatCatId(num: number) {
   return `#${num.toString().padStart(5, '0')}`;
 }
 
-const PLACEHOLDER_CATS: Cat[] = [
-  { id: '1', catNumber: 1, name: 'Tabby', emoji: '🐱', spottedAt: '2026-06-23T10:42:00Z', spottedBy: '', locationName: 'Park Street' },
-  { id: '2', catNumber: 2, name: 'Shadow', emoji: '🐈‍⬛', spottedAt: '2026-06-21T15:15:00Z', spottedBy: '', locationName: 'Main Ave' },
-  { id: '3', catNumber: 3, name: 'Fluffy', emoji: '🐈', spottedAt: '2026-06-18T06:30:00Z', spottedBy: '' },
-  { id: '4', catNumber: 4, name: 'Mango', emoji: '😸', spottedAt: '2026-06-15T08:05:00Z', spottedBy: '', locationName: 'Bus Stop' },
-  { id: '5', catNumber: 5, name: 'Ghost', emoji: '🙀', spottedAt: '2026-06-10T12:20:00Z', spottedBy: '' },
-];
+function parseDateFromFilename(fileName: string | null | undefined): string | null {
+  if (!fileName) return null;
+  // IMG_YYYYMMDD_HHmmss, VID_, PANO_, Screenshot_YYYYMMDD_HHmmss, etc.
+  const m1 = fileName.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
+  if (m1) {
+    const [, yr, mo, dy, hr, mn, sc] = m1.map(Number);
+    if (yr >= 2000 && mo >= 1 && mo <= 12 && dy >= 1 && dy <= 31) {
+      const d = new Date(yr, mo - 1, dy, hr, mn, sc);
+      if (!isNaN(d.getTime())) return d.toISOString();
+    }
+  }
+  // WhatsApp: "WhatsApp Image 2024-06-23 at 10.30.45"
+  // Signal: "signal-2024-06-23-10-30-45"
+  const m2 = fileName.match(/(\d{4})-(\d{2})-(\d{2})(?:[- _at]+(\d{2})[._-](\d{2})[._-](\d{2}))?/i);
+  if (m2) {
+    const yr = Number(m2[1]), mo = Number(m2[2]), dy = Number(m2[3]);
+    const hr = m2[4] ? Number(m2[4]) : 0;
+    const mn = m2[5] ? Number(m2[5]) : 0;
+    const sc = m2[6] ? Number(m2[6]) : 0;
+    if (yr >= 2000 && mo >= 1 && mo <= 12 && dy >= 1 && dy <= 31) {
+      const d = new Date(yr, mo - 1, dy, hr, mn, sc);
+      if (!isNaN(d.getTime())) return d.toISOString();
+    }
+  }
+  return null;
+}
+
 
 export default function CollectionScreen() {
   const navigation = useNavigation<NavProp>();
@@ -51,17 +80,29 @@ export default function CollectionScreen() {
 
   async function loadCats() {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setCats(PLACEHOLDER_CATS); return; }
+    if (!user) return;
     setUserId(user.id);
-    const { data, error } = await supabase
-      .from('cats')
-      .select('*')
-      .eq('spotted_by', user.id)
-      .order('cat_number', { ascending: true });
-    if (data && data.length > 0) {
-      setCats(data as Cat[]);
-    } else {
-      setCats(PLACEHOLDER_CATS);
+    const { data } = await supabase
+      .from('collections')
+      .select('cats(id, cat_number, name, emoji, photo_url, lat, lng, location_name, spotted_at, spotted_by)')
+      .eq('user_id', user.id);
+    if (data) {
+      setCats(
+        (data as any[])
+          .map(row => ({
+            id: row.cats.id,
+            catNumber: row.cats.cat_number,
+            name: row.cats.name,
+            emoji: row.cats.emoji,
+            photoUri: row.cats.photo_url ?? undefined,
+            lat: row.cats.lat ?? undefined,
+            lng: row.cats.lng ?? undefined,
+            locationName: row.cats.location_name ?? undefined,
+            spottedAt: row.cats.spotted_at,
+            spottedBy: row.cats.spotted_by,
+          } as Cat))
+          .sort((a, b) => a.catNumber - b.catNumber),
+      );
     }
   }
 
@@ -76,37 +117,50 @@ export default function CollectionScreen() {
     const asset = result.assets[0];
     const photoUri = asset.uri ?? '';
 
-    // Try to get EXIF date
-    const spottedAt = asset.timestamp
-      ? new Date(Number(asset.timestamp) * 1000).toISOString()
-      : new Date().toISOString();
-
-    // Try to get GPS
-    const lat = (asset as any).latitude ?? undefined;
-    const lng = (asset as any).longitude ?? undefined;
-
-    const newCat: Partial<Cat> = {
-      name: 'New Cat',
-      emoji: '🐱',
-      photoUri,
-      spottedAt,
-      lat,
-      lng,
-    };
-
-    if (!lat || !lng) {
-      // No GPS — navigate to edit screen so user can add location via map
-      navigation.navigate('CatEdit', {
-        cat: { ...newCat, id: '', catNumber: cats.length + 1, spottedBy: userId } as Cat,
-        isNew: true,
-      } as any);
-    } else {
-      // Has GPS — go straight to edit for naming
-      navigation.navigate('CatEdit', {
-        cat: { ...newCat, id: '', catNumber: cats.length + 1, spottedBy: userId } as Cat,
-        isNew: true,
-      } as any);
+    // 1. Try EXIF DateTimeOriginal from the library (works for Google Photos + camera rolls with EXIF)
+    let spottedAt: string | null = null;
+    if (asset.timestamp) {
+      const d = new Date(asset.timestamp);
+      if (!isNaN(d.getTime()) && d.getFullYear() >= 2000) {
+        spottedAt = d.toISOString();
+      }
     }
+    // 2. Fallback: parse date from filename (covers screenshots, WhatsApp, Signal, etc.)
+    if (!spottedAt) {
+      spottedAt = parseDateFromFilename(asset.fileName) ?? new Date().toISOString();
+    }
+
+    const lat: number | undefined = (asset as any).latitude ?? undefined;
+    const lng: number | undefined = (asset as any).longitude ?? undefined;
+
+    let locationName: string | undefined;
+    if (lat && lng) {
+      try {
+        const resp = await fetch(
+          `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?types=neighborhood,place&access_token=${MAPBOX_PUBLIC_TOKEN}`,
+        );
+        const json = await resp.json();
+        locationName = json.features?.[0]?.place_name ?? undefined;
+      } catch {
+        // location name stays undefined
+      }
+    }
+
+    navigation.navigate('CatEdit', {
+      cat: {
+        id: '',
+        catNumber: 0,
+        name: 'New Cat',
+        emoji: '🐱',
+        photoUri,
+        spottedAt,
+        lat,
+        lng,
+        locationName,
+        spottedBy: userId,
+      } as Cat,
+      isNew: true,
+    } as any);
   }
 
   function renderTile({ item, index }: { item: Cat; index: number }) {
@@ -117,15 +171,13 @@ export default function CollectionScreen() {
       <View style={[styles.tile, isRightCol && styles.tileRight]}>
         {/* Photo */}
         <View style={styles.photoArea}>
-          {item.photoUri ? (
+          {item.photoUri?.startsWith('http') && (
             <Image source={{ uri: item.photoUri }} style={styles.photo} />
-          ) : (
-            <Text style={styles.photoEmoji}>{item.emoji}</Text>
           )}
           <TouchableOpacity
             style={styles.editBtn}
             onPress={() => navigation.navigate('CatEdit', { cat: item })}>
-            <Text style={styles.editBtnIcon}>✏️</Text>
+            <Pencil size={11} color="#fff9e8" strokeWidth={2} />
           </TouchableOpacity>
         </View>
 
@@ -136,21 +188,21 @@ export default function CollectionScreen() {
             <Text style={styles.nameTagText}>{item.name}</Text>
           </View>
           <View style={styles.metaRow}>
-            <Text style={styles.metaIcon}>🕐</Text>
+            <Clock size={10} color="#eab664" strokeWidth={1.8} />
             <Text style={styles.metaText}>{formatDate(item.spottedAt)}</Text>
           </View>
           {hasLocation ? (
             <View style={styles.metaRow}>
-              <Text style={styles.metaIcon}>📍</Text>
+              <MapPin size={10} color="#eab664" strokeWidth={1.8} />
               <Text style={styles.metaText} numberOfLines={1}>
-                {item.locationName || `${item.lat?.toFixed(3)}, ${item.lng?.toFixed(3)}`}
+                {item.locationName || formatCoords(item.lat, item.lng)}
               </Text>
             </View>
           ) : (
             <TouchableOpacity
               style={styles.metaRow}
               onPress={() => navigation.navigate('CatEdit', { cat: item })}>
-              <Text style={styles.metaIcon}>📍</Text>
+              <MapPin size={10} color="#c0626b" strokeWidth={1.8} />
               <Text style={styles.noLocText}>tap to add location</Text>
             </TouchableOpacity>
           )}
@@ -161,29 +213,29 @@ export default function CollectionScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor="#2B2B6E" />
+      <StatusBar barStyle="light-content" backgroundColor="#5e3620" />
 
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <View>
-            <Text style={styles.headerLabel}>your cats</Text>
+            <Text style={styles.headerLabel}>field notes</Text>
             <Text style={styles.headerTitle}>Collection</Text>
           </View>
           <View style={styles.headerActions}>
             <View style={styles.countBadge}>
-              <Text style={styles.countEmoji}>🐱</Text>
+              <Image source={require('../../../assets/Icons/Cat.png')} style={styles.countIcon} />
               <Text style={styles.countText}>{cats.length}</Text>
             </View>
-            <TouchableOpacity style={styles.mapIconBtn}>
-              <Text style={styles.mapIconText}>🗺</Text>
+            <TouchableOpacity style={styles.mapIconBtn} onPress={() => navigation.navigate('CatMap')}>
+              <Map size={17} color="#fff9e8" strokeWidth={1.8} />
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Add from gallery */}
         <TouchableOpacity style={styles.galleryBtn} onPress={addFromGallery}>
-          <Text style={styles.galleryBtnIcon}>🖼</Text>
+          <ImageIcon size={18} color="#5e3620" strokeWidth={1.8} />
           <Text style={styles.galleryBtnText}>Add cat from gallery</Text>
         </TouchableOpacity>
       </View>
@@ -198,6 +250,7 @@ export default function CollectionScreen() {
         showsVerticalScrollIndicator={false}
         columnWrapperStyle={styles.row}
       />
+
     </View>
   );
 }
@@ -205,12 +258,12 @@ export default function CollectionScreen() {
 const TILE_WIDTH = '48.5%';
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#F5F0F8' },
+  root: { flex: 1, backgroundColor: '#fdfcee' },
 
   header: {
-    backgroundColor: '#2B2B6E',
+    backgroundColor: '#5e3620',
     paddingHorizontal: 18,
-    paddingTop: 22,
+    paddingTop: 28,
     paddingBottom: 16,
     gap: 14,
   },
@@ -221,7 +274,7 @@ const styles = StyleSheet.create({
   },
   headerLabel: {
     fontSize: 11,
-    color: '#9B9BC8',
+    color: '#eab664',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
     marginBottom: 3,
@@ -229,40 +282,37 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 26,
     fontWeight: '500',
-    color: '#E8D8F0',
+    color: '#fff9e8',
     letterSpacing: -0.3,
-    fontStyle: 'italic',
   },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   countBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#3d3d8a',
+    backgroundColor: '#7a4828',
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 5,
   },
-  countEmoji: { fontSize: 14 },
-  countText: { fontSize: 13, fontWeight: '500', color: '#E8D8F0' },
+  countIcon: { width: 18, height: 18, resizeMode: 'contain' },
+  countText: { fontSize: 13, fontWeight: '500', color: '#fff9e8' },
   mapIconBtn: {
-    width: 34, height: 34, backgroundColor: '#3d3d8a',
+    width: 34, height: 34, backgroundColor: '#7a4828',
     borderRadius: 10, justifyContent: 'center', alignItems: 'center',
-    borderWidth: 0.5, borderColor: '#5B5B9E',
+    borderWidth: 0.5, borderColor: '#faa93e',
   },
-  mapIconText: { fontSize: 17 },
 
   galleryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#E8D8F0',
+    backgroundColor: '#fff9e8',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
-  galleryBtnIcon: { fontSize: 18 },
-  galleryBtnText: { fontSize: 13, fontWeight: '500', color: '#2B2B6E' },
+  galleryBtnText: { fontSize: 13, fontWeight: '500', color: '#5e3620' },
 
   gridContent: { padding: 14, paddingBottom: 100 },
   row: { justifyContent: 'space-between' },
@@ -272,7 +322,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 16,
     borderWidth: 0.5,
-    borderColor: '#E8D8F0',
+    borderColor: '#fff9e8',
     overflow: 'hidden',
     marginBottom: 10,
   },
@@ -281,7 +331,7 @@ const styles = StyleSheet.create({
   photoArea: {
     width: '100%',
     height: 120,
-    backgroundColor: '#E8D8F0',
+    backgroundColor: '#fff9e8',
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
@@ -294,21 +344,20 @@ const styles = StyleSheet.create({
     right: 7,
     width: 26,
     height: 26,
-    backgroundColor: 'rgba(43,43,110,0.75)',
+    backgroundColor: 'rgba(94,54,32,0.75)',
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  editBtnIcon: { fontSize: 11 },
 
   infoArea: { padding: 10 },
   nameTag: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#F5F0F8',
+    backgroundColor: '#fdfcee',
     borderWidth: 0.5,
-    borderColor: '#D4B8D0',
+    borderColor: '#eab664',
     borderRadius: 20,
     paddingHorizontal: 10,
     paddingVertical: 3,
@@ -316,10 +365,9 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   nameTagPaw: { fontSize: 12 },
-  nameTagText: { fontSize: 11, fontWeight: '500', color: '#2B2B6E' },
+  nameTagText: { fontSize: 11, fontWeight: '500', color: '#5e3620' },
 
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 3 },
-  metaIcon: { fontSize: 10 },
-  metaText: { fontSize: 10, color: '#9B9BC8', flex: 1 },
+  metaText: { fontSize: 10, color: '#eab664', flex: 1 },
   noLocText: { fontSize: 10, color: '#c0626b', flex: 1 },
 });

@@ -31,8 +31,8 @@ export default function AppNavigator() {
 
   if (!initialRoute) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#2B2B6E' }}>
-        <ActivityIndicator color="#E8D8F0" size="large" />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#5e3620' }}>
+        <ActivityIndicator color="#fff9e8" size="large" />
       </View>
     );
   }

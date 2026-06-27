@@ -10,6 +10,8 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  StatusBar,
+  Image,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -121,16 +123,20 @@ export default function LoginScreen({ navigation }: Props) {
     <KeyboardAvoidingView
       style={styles.root}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
 
-        {/* Header — no bottom border radius so it flows into body */}
-        <View style={styles.header}>
-          <Text style={styles.headerEmoji}>🐱</Text>
+        <View style={styles.appName}>
           <Text style={styles.headerTitle}>Catventory</Text>
           <Text style={styles.headerSub}>collect every cat you meet</Text>
         </View>
 
-        {/* Body — no top border so it sits flush under the header */}
+        <Image
+          source={require('../../../assets/Login.jpg')}
+          style={styles.heroImage}
+          resizeMode="contain"
+        />
+
         <View style={styles.body}>
           <Text style={styles.welcome}>Welcome</Text>
           <Text style={styles.welcomeSub}>Enter your email to get started</Text>
@@ -138,13 +144,10 @@ export default function LoginScreen({ navigation }: Props) {
           {/* Email */}
           <Text style={styles.label}>Email address</Text>
           <View style={styles.inputRow}>
-            <View style={styles.iconWrap}>
-              <Text style={styles.inputIcon}>✉</Text>
-            </View>
             <TextInput
               style={styles.textInput}
               placeholder="you@example.com"
-              placeholderTextColor="#BBAED0"
+              placeholderTextColor="#a09070"
               value={email}
               onChangeText={setEmail}
               keyboardType="email-address"
@@ -159,7 +162,7 @@ export default function LoginScreen({ navigation }: Props) {
             onPress={sendOtp}
             disabled={!email.trim() || otpSent || loadingSend}>
             {loadingSend ? (
-              <ActivityIndicator color="#E8D8F0" />
+              <ActivityIndicator color="#fff9e8" />
             ) : (
               <Text style={styles.primaryBtnText}>{otpSent ? 'OTP sent' : 'Send OTP'}</Text>
             )}
@@ -196,7 +199,7 @@ export default function LoginScreen({ navigation }: Props) {
             onPress={verifyOtp}
             disabled={!otpFilled || loadingVerify}>
             {loadingVerify ? (
-              <ActivityIndicator color="#2B2B6E" />
+              <ActivityIndicator color="#5e3620" />
             ) : (
               <Text style={styles.secondaryBtnText}>Verify & enter</Text>
             )}
@@ -217,77 +220,63 @@ export default function LoginScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#F5F0F8' },
-  scroll: { flexGrow: 1, justifyContent: 'center', padding: 20 },
+  root: { flex: 1, backgroundColor: '#fff' },
+  scroll: { flexGrow: 1, backgroundColor: '#fdfcee' },
 
-  header: {
-    backgroundColor: '#2B2B6E',
-    borderRadius: 20,
-    borderBottomLeftRadius: 0,
-    borderBottomRightRadius: 0,
-    paddingVertical: 40,
-    alignItems: 'center',
+  appName: {
+    backgroundColor: '#fff',
+    paddingTop: 17,
+    paddingBottom: 12,
+    paddingHorizontal: 24,
+    alignItems: 'flex-start',
   },
-  headerEmoji: { fontSize: 52, marginBottom: 8 },
-  headerTitle: { fontSize: 26, fontWeight: '500', color: '#E8D8F0', letterSpacing: -0.5 },
-  headerSub: { fontSize: 13, color: '#9B9BC8', marginTop: 4 },
+  headerTitle: { fontSize: 28, fontWeight: '700', color: '#5e3620', letterSpacing: -0.5 },
+  headerSub: { fontSize: 13, color: '#a09070', marginTop: 3 },
+
+  heroImage: {
+    width: '100%',
+    height: 180,
+    marginTop: -19,
+  },
 
   body: {
-    backgroundColor: '#F5F0F8',
-    borderLeftWidth: 0.5,
-    borderRightWidth: 0.5,
-    borderBottomWidth: 0.5,
-    borderColor: '#D4B8D0',
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    padding: 24,
+    paddingTop: 20,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
   },
 
-  welcome: { fontSize: 20, fontWeight: '500', color: '#2B2B6E', marginBottom: 4 },
-  welcomeSub: { fontSize: 13, color: '#6B6B9E', marginBottom: 20 },
+  welcome: { fontSize: 20, fontWeight: '500', color: '#5e3620', marginBottom: 4 },
+  welcomeSub: { fontSize: 13, color: '#736c5c', marginBottom: 20 },
 
-  label: { fontSize: 12, color: '#6B6B9E', marginBottom: 6 },
+  label: { fontSize: 12, color: '#736c5c', marginBottom: 6 },
 
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 0.5,
-    borderColor: '#9B9BC8',
+    borderColor: '#eab664',
     borderRadius: 8,
     paddingHorizontal: 12,
     height: 44,
     backgroundColor: '#fff',
     marginBottom: 12,
   },
-  iconWrap: {
-    width: 16,
-    height: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 8,
-  },
-  inputIcon: {
-    fontSize: 13,
-    color: '#5B5B9E',
-    includeFontPadding: false,
-    textAlignVertical: 'center',
-  },
-  textInput: { flex: 1, fontSize: 14, color: '#2B2B6E' },
+  textInput: { flex: 1, fontSize: 14, color: '#5e3620' },
 
   primaryBtn: {
     height: 44,
-    backgroundColor: '#2B2B6E',
+    backgroundColor: '#5e3620',
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
   },
   primaryBtnDisabled: { opacity: 0.5 },
-  primaryBtnText: { color: '#E8D8F0', fontSize: 15, fontWeight: '500' },
+  primaryBtnText: { color: '#fff9e8', fontSize: 15, fontWeight: '500' },
 
   dividerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
-  dividerLine: { flex: 1, height: 0.5, backgroundColor: '#D4B8D0' },
-  dividerText: { fontSize: 12, color: '#BBAED0', marginHorizontal: 8 },
+  dividerLine: { flex: 1, height: 0.5, backgroundColor: '#eab664' },
+  dividerText: { fontSize: 12, color: '#a09070', marginHorizontal: 8 },
 
   otpRow: {
     flexDirection: 'row',
@@ -299,28 +288,28 @@ const styles = StyleSheet.create({
     width: 44,
     height: 52,
     borderWidth: 0.5,
-    borderColor: '#5B5B9E',
+    borderColor: '#faa93e',
     borderRadius: 8,
     fontSize: 20,
     fontWeight: '500',
-    color: '#2B2B6E',
+    color: '#5e3620',
     backgroundColor: '#fff',
   },
-  digitBoxFilled: { borderColor: '#2B2B6E', borderWidth: 1.5 },
+  digitBoxFilled: { borderColor: '#5e3620', borderWidth: 1.5 },
 
   secondaryBtn: {
     height: 44,
-    backgroundColor: '#D4B8D0',
+    backgroundColor: '#eab664',
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
   },
   secondaryBtnDisabled: { opacity: 0.5 },
-  secondaryBtnText: { color: '#2B2B6E', fontSize: 15, fontWeight: '500' },
+  secondaryBtnText: { color: '#5e3620', fontSize: 15, fontWeight: '500' },
 
   resendRow: { flexDirection: 'row', justifyContent: 'center' },
-  resendText: { fontSize: 12, color: '#6B6B9E' },
-  resendLink: { fontSize: 12, color: '#5B5B9E', fontWeight: '500' },
-  resendLinkDisabled: { color: '#BBAED0' },
+  resendText: { fontSize: 12, color: '#736c5c' },
+  resendLink: { fontSize: 12, color: '#faa93e', fontWeight: '500' },
+  resendLinkDisabled: { color: '#a09070' },
 });

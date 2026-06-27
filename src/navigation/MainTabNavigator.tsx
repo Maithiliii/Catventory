@@ -1,39 +1,50 @@
 import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Compass, Camera as CameraIcon, Trophy, User } from 'lucide-react-native';
+import PawIcon from '../components/PawIcon';
 import ExploreScreen from '../screens/main/ExploreScreen';
 import CollectionNavigator from './CollectionNavigator';
 import CameraScreen from '../screens/main/CameraScreen';
 import RanksScreen from '../screens/main/RanksScreen';
-import ProfileScreen from '../screens/main/ProfileScreen';
+import ProfileNavigator from './ProfileNavigator';
 import type { MainTabParamList } from '../types';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
-const ACTIVE = '#2B2B6E';
-const INACTIVE = '#9B9BC8';
+const ACTIVE = '#5e3620';
+const INACTIVE = '#a09070';
 
-const ICONS: Record<string, string> = {
-  Explore: '🧭',
-  Collection: '🐾',
-  Ranks: '🏆',
-  Profile: '👤',
+type IconName = 'Explore' | 'Collection' | 'Ranks' | 'Profile';
+
+const LUCIDE_MAP: Record<Exclude<IconName, 'Collection'>, React.ComponentType<{ size: number; color: string; strokeWidth: number }>> = {
+  Explore: Compass,
+  Ranks: Trophy,
+  Profile: User,
 };
 
 const TAB_BAR_STYLE = {
   backgroundColor: '#fff',
   borderTopWidth: 0.5,
-  borderTopColor: '#E8D8F0',
-  paddingBottom: Platform.OS === 'ios' ? 20 : 12,
-  paddingTop: 0,
-  height: Platform.OS === 'ios' ? 80 : 64,
+  borderTopColor: '#fff9e8',
+  paddingBottom: Platform.OS === 'ios' ? 20 : 8,
+  paddingTop: 6,
+  height: Platform.OS === 'ios' ? 84 : 68,
 };
 
-function TabBarIcon({ name, focused }: { name: string; focused: boolean }) {
+function TabBarIcon({ name, focused }: { name: IconName; focused: boolean }) {
+  const color = focused ? ACTIVE : INACTIVE;
+  let iconEl: React.ReactNode;
+  if (name === 'Collection') {
+    iconEl = <PawIcon size={22} color={color} strokeWidth={1.8} />;
+  } else {
+    const IconComponent = LUCIDE_MAP[name];
+    iconEl = <IconComponent size={22} color={color} strokeWidth={1.8} />;
+  }
   return (
     <View style={tabStyles.iconWrap}>
-      <Text style={tabStyles.icon}>{ICONS[name]}</Text>
-      <Text style={[tabStyles.label, { color: focused ? ACTIVE : INACTIVE }]}>{name}</Text>
+      {iconEl}
+      <Text style={[tabStyles.tabLabel, { color }]} numberOfLines={1}>{name}</Text>
     </View>
   );
 }
@@ -41,15 +52,19 @@ function TabBarIcon({ name, focused }: { name: string; focused: boolean }) {
 function CameraTabIcon() {
   return (
     <View style={tabStyles.cameraBtn}>
-      <Text style={tabStyles.cameraIcon}>📷</Text>
+      <CameraIcon size={22} color="#fff9e8" strokeWidth={1.8} />
     </View>
   );
 }
 
 const tabStyles = StyleSheet.create({
-  iconWrap: { alignItems: 'center', gap: 4, paddingTop: 4 },
-  icon: { fontSize: 22 },
-  label: { fontSize: 10, fontWeight: '500' },
+  iconWrap: {
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 10,
+    width: 60,
+  },
+  tabLabel: { fontSize: 9, marginTop: 3, letterSpacing: 0.1 },
   cameraBtn: {
     width: 50,
     height: 50,
@@ -57,11 +72,8 @@ const tabStyles = StyleSheet.create({
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2.5,
-    borderColor: '#F5F0F8',
-    marginBottom: 20,
+    marginTop: 8,
   },
-  cameraIcon: { fontSize: 22 },
 });
 
 export default function MainTabNavigator() {
@@ -103,7 +115,7 @@ export default function MainTabNavigator() {
       />
       <Tab.Screen
         name="Profile"
-        component={ProfileScreen}
+        component={ProfileNavigator}
         options={{
           tabBarIcon: ({ focused }) => <TabBarIcon name="Profile" focused={focused} />,
         }}

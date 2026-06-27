@@ -69,6 +69,10 @@ yarn-error.log
 # Claude Code memory
 .claude/
 
+# Environment variables
+.env
+.env.local
+
 # Yarn
 .yarn/*
 !.yarn/patches

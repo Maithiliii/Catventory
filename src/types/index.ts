@@ -41,4 +41,12 @@ export type CollectionStackParamList = {
     selectedLocation?: { lat: number; lng: number; name: string };
   };
   MapPicker: { returnTo: 'CatEdit' };
+  CatMap: undefined;
+};
+
+export type ProfileStackParamList = {
+  ProfileMain: undefined;
+  About: undefined;
+  EditProfile: undefined;
+  CatMap: undefined;
 };

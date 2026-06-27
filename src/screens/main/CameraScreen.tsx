@@ -8,6 +8,9 @@ import {
   Easing,
   StatusBar,
   Alert,
+  PermissionsAndroid,
+  Platform,
+  ActivityIndicator,
 } from 'react-native';
 import {
   Camera,
@@ -15,9 +18,11 @@ import {
   useCameraPermission,
   usePhotoOutput,
 } from 'react-native-vision-camera';
-import { launchImageLibrary } from 'react-native-image-picker';
-import { useIsFocused, useNavigation } from '@react-navigation/native';
+import { X, Zap, ZapOff, SwitchCamera } from 'lucide-react-native';
+import { useIsFocused, useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import MapboxGL from '@rnmapbox/maps';
+import { MAPBOX_PUBLIC_TOKEN } from '@env';
 import type { MainTabParamList } from '../../types';
 
 type NavProp = BottomTabNavigationProp<MainTabParamList>;
@@ -31,6 +36,24 @@ type FlashMode = 'off' | 'on';
 type CameraPos = 'back' | 'front';
 type DetectionState = 'scanning' | 'detected';
 
+async function requestLocationPermission(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  try {
+    const result = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      {
+        title: 'Location access',
+        message: 'Allow Catventory to use your location to tag where you spotted this cat?',
+        buttonPositive: 'Allow',
+        buttonNegative: 'Skip',
+      },
+    );
+    return result === PermissionsAndroid.RESULTS.GRANTED;
+  } catch {
+    return false;
+  }
+}
+
 export default function CameraScreen() {
   const navigation = useNavigation<NavProp>();
   const { hasPermission, requestPermission } = useCameraPermission();
@@ -38,11 +61,12 @@ export default function CameraScreen() {
   const [flash, setFlash] = useState<FlashMode>('off');
   const [detection, setDetection] = useState<DetectionState>('scanning');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [locationGranted, setLocationGranted] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const device = useCameraDevice(position);
   const isFocused = useIsFocused();
   const photoOutput = usePhotoOutput();
-
   // Pulsing animation for scanning state
   const pulseAnim = useRef(new Animated.Value(1)).current;
   // Dot blink animation for detected state
@@ -54,12 +78,30 @@ export default function CameraScreen() {
     if (!hasPermission) requestPermission();
   }, [hasPermission, requestPermission]);
 
+  useFocusEffect(
+    useCallback(() => {
+      StatusBar.setTranslucent(true);
+      StatusBar.setBackgroundColor('transparent');
+      setDetection('scanning');
+      setPhotoUri(null);
+      setSaving(false);
+      requestLocationPermission().then(granted => {
+        setLocationGranted(granted);
+        if (granted) MapboxGL.locationManager.start();
+      });
+      return () => {
+        StatusBar.setTranslucent(false);
+        MapboxGL.locationManager.stop();
+      };
+    }, []),
+  );
+
   // Scanning pulse loop
   useEffect(() => {
     const pulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 0.4, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.4, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
       ]),
     );
     pulse.start();
@@ -72,8 +114,8 @@ export default function CameraScreen() {
       Animated.timing(cornerColor, { toValue: 1, duration: 300, useNativeDriver: false }).start();
       const blink = Animated.loop(
         Animated.sequence([
-          Animated.timing(dotAnim, { toValue: 0.2, duration: 600, useNativeDriver: true }),
-          Animated.timing(dotAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+          Animated.timing(dotAnim, { toValue: 0.2, duration: 600, useNativeDriver: false }),
+          Animated.timing(dotAnim, { toValue: 1, duration: 600, useNativeDriver: false }),
         ]),
       );
       blink.start();
@@ -85,7 +127,7 @@ export default function CameraScreen() {
 
   const animatedCornerColor = cornerColor.interpolate({
     inputRange: [0, 1],
-    outputRange: ['#ffffff', '#CBDF90'],
+    outputRange: ['#eab664', '#CBDF90'],
   });
 
   const handleShutter = useCallback(async () => {
@@ -98,17 +140,55 @@ export default function CameraScreen() {
     }
   }, [photoOutput, flash]);
 
-  async function handleGallery() {
-    const result = await launchImageLibrary({ mediaType: 'photo', includeExtra: true, selectionLimit: 1 });
-    if (result.assets?.length) {
-      setPhotoUri(result.assets[0].uri ?? null);
-      setDetection('detected');
-    }
-  }
+  async function handleSave() {
+    if (!photoUri) return;
+    setSaving(true);
 
-  function handleSave() {
-    navigation.navigate('Collection');
-    // TODO: pass photoUri + saveType into CatEdit once deep-link is wired up
+    let lat: number | undefined;
+    let lng: number | undefined;
+    let locationName: string | undefined;
+
+    if (locationGranted) {
+      try {
+        const loc = MapboxGL.locationManager.getLastKnownLocation() as any;
+        if (loc?.geometry?.coordinates) {
+          const [locLng, locLat] = loc.geometry.coordinates as [number, number];
+          lng = locLng;
+          lat = locLat;
+          try {
+            const resp = await fetch(
+              `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?types=neighborhood,place&access_token=${MAPBOX_PUBLIC_TOKEN}`,
+            );
+            const json = await resp.json();
+            locationName = json.features?.[0]?.place_name;
+          } catch {
+            // locationName stays undefined, user can add manually
+          }
+        }
+      } catch {
+        // proceed without location
+      }
+    }
+
+    setSaving(false);
+    (navigation as any).navigate('Collection', {
+      screen: 'CatEdit',
+      params: {
+        cat: {
+          id: '',
+          catNumber: 0,
+          name: 'New Cat',
+          emoji: '🐱',
+          photoUri,
+          spottedAt: new Date().toISOString(),
+          lat,
+          lng,
+          locationName,
+          spottedBy: '',
+        },
+        isNew: true,
+      },
+    });
   }
 
   function handleClose() {
@@ -143,7 +223,7 @@ export default function CameraScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <StatusBar barStyle="light-content" />
 
       {/* Camera viewfinder */}
       <Camera
@@ -159,7 +239,7 @@ export default function CameraScreen() {
       {/* Top bar */}
       <View style={styles.topBar}>
         <TouchableOpacity style={styles.topBtn} onPress={handleClose}>
-          <Text style={styles.topBtnIcon}>✕</Text>
+          <X size={16} color="#fff" strokeWidth={2} />
         </TouchableOpacity>
         <View style={styles.hintPill}>
           <Text style={styles.hintText}>
@@ -169,36 +249,38 @@ export default function CameraScreen() {
         <TouchableOpacity
           style={styles.topBtn}
           onPress={() => setFlash(f => (f === 'off' ? 'on' : 'off'))}>
-          <Text style={styles.topBtnIcon}>{flash === 'on' ? '⚡' : '🔦'}</Text>
+          {flash === 'on'
+            ? <Zap size={16} color="#fff" strokeWidth={2} />
+            : <ZapOff size={16} color="#fff" strokeWidth={2} />}
         </TouchableOpacity>
       </View>
 
       {/* Detection frame */}
       <View style={styles.frameWrap} pointerEvents="none">
-        <Animated.View
-          style={[
-            styles.frameBorder,
-            { borderColor: animatedCornerColor, opacity: detection === 'scanning' ? 0.2 : 0.4 },
-          ]}
-        />
-        {(['tl', 'tr', 'bl', 'br'] as const).map(pos => (
+        <View style={styles.frameInner}>
           <Animated.View
-            key={pos}
             style={[
-              styles.corner,
-              styles[pos],
-              { borderColor: animatedCornerColor, opacity: detection === 'scanning' ? pulseAnim : 1 },
+              styles.frameBorder,
+              { borderColor: animatedCornerColor, opacity: detection === 'scanning' ? 0.2 : 0.4 },
             ]}
           />
-        ))}
-        <View style={styles.frameLabel}>
-          {detection === 'scanning' ? (
-            <Animated.Text style={[styles.scanningText, { opacity: pulseAnim }]}>
-              scanning...
-            </Animated.Text>
-          ) : (
-            <Text style={styles.detectedFrameText}>🐱</Text>
-          )}
+          {(['tl', 'tr', 'bl', 'br'] as const).map(pos => (
+            <Animated.View
+              key={pos}
+              style={[
+                styles.corner,
+                styles[pos],
+                { borderColor: animatedCornerColor, opacity: detection === 'scanning' ? pulseAnim : 1 },
+              ]}
+            />
+          ))}
+          <View style={styles.frameLabel}>
+            {detection === 'scanning' && (
+              <Animated.Text style={[styles.scanningText, { opacity: pulseAnim }]}>
+                scanning...
+              </Animated.Text>
+            )}
+          </View>
         </View>
       </View>
 
@@ -211,21 +293,17 @@ export default function CameraScreen() {
             <View style={styles.popupHeader}>
               <Animated.View style={[styles.greenDot, { opacity: dotAnim }]} />
               <Text style={styles.popupTitle}>cat detected!</Text>
-              <Text style={styles.popupSub}>how do you want to save?</Text>
             </View>
-            <View style={styles.popupOptions}>
-              <TouchableOpacity style={styles.optionLight} onPress={handleSave}>
-                <Text style={styles.optionEmoji}>✨</Text>
-                <Text style={styles.optionTitleDark}>sticker</Text>
-                <Text style={styles.optionSubDark}>bg removed</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.optionDark} onPress={handleSave}>
-                <Text style={styles.optionEmoji}>📷</Text>
-                <Text style={styles.optionTitleLight}>normal</Text>
-                <Text style={styles.optionSubLight}>full photo</Text>
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity onPress={resetDetection} style={styles.rescanBtn}>
+            <TouchableOpacity
+              style={styles.saveBtn}
+              onPress={handleSave}
+              activeOpacity={0.85}
+              disabled={saving}>
+              {saving
+                ? <ActivityIndicator color="#fff9e8" size="small" />
+                : <Text style={styles.saveBtnText}>Save to collection</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={resetDetection} style={styles.rescanBtn} disabled={saving}>
               <Text style={styles.rescanText}>retake</Text>
             </TouchableOpacity>
           </View>
@@ -233,9 +311,7 @@ export default function CameraScreen() {
 
         {/* Shutter row */}
         <View style={styles.shutterRow}>
-          <TouchableOpacity style={styles.sideBtn} onPress={handleGallery}>
-            <Text style={styles.sideBtnIcon}>🖼</Text>
-          </TouchableOpacity>
+          <View style={styles.sideBtn} />
           <TouchableOpacity
             style={styles.shutter}
             onPress={detection === 'scanning' ? handleShutter : resetDetection}
@@ -245,7 +321,7 @@ export default function CameraScreen() {
           <TouchableOpacity
             style={styles.sideBtn}
             onPress={() => setPosition(p => (p === 'back' ? 'front' : 'back'))}>
-            <Text style={styles.sideBtnIcon}>🔄</Text>
+            <SwitchCamera size={22} color="#fff" strokeWidth={1.8} />
           </TouchableOpacity>
         </View>
       </View>
@@ -274,27 +350,32 @@ const styles = StyleSheet.create({
   },
   topBtn: {
     width: 34, height: 34,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: 'rgba(94,54,32,0.65)',
     borderRadius: 10,
+    borderWidth: 0.5, borderColor: 'rgba(234,182,100,0.45)',
     justifyContent: 'center', alignItems: 'center',
   },
-  topBtnIcon: { fontSize: 16, color: '#fff' },
   hintPill: {
-    backgroundColor: 'rgba(43,43,110,0.8)',
-    borderWidth: 0.5, borderColor: '#5B5B9E',
+    backgroundColor: 'rgba(45,26,13,0.88)',
+    borderWidth: 0.5, borderColor: '#faa93e',
     borderRadius: 20,
     paddingHorizontal: 14, paddingVertical: 5,
   },
-  hintText: { fontSize: 12, color: '#E8D8F0' },
+  hintText: { fontSize: 12, color: '#fff9e8' },
 
   frameWrap: {
     position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: -30,
+  },
+  frameInner: {
     width: FRAME_SIZE,
     height: FRAME_SIZE,
-    top: '50%',
-    left: '50%',
-    marginTop: -(FRAME_SIZE / 2) - 30,
-    marginLeft: -(FRAME_SIZE / 2),
   },
   frameBorder: {
     position: 'absolute',
@@ -320,13 +401,11 @@ const styles = StyleSheet.create({
   },
   scanningText: {
     fontSize: 11,
-    color: 'rgba(255,255,255,0.55)',
-    backgroundColor: 'rgba(232,216,240,0.1)',
+    color: '#eab664',
+    backgroundColor: 'rgba(45,26,13,0.5)',
     paddingHorizontal: 12, paddingVertical: 5,
     borderRadius: 4,
   },
-  detectedFrameText: { fontSize: 32 },
-
   bottomSection: {
     position: 'absolute',
     bottom: 0, left: 0, right: 0,
@@ -334,60 +413,56 @@ const styles = StyleSheet.create({
     paddingBottom: 44,
   },
   popup: {
-    backgroundColor: 'rgba(43,43,110,0.9)',
-    borderWidth: 0.5, borderColor: '#5B5B9E',
+    backgroundColor: 'rgba(45,26,13,0.93)',
+    borderWidth: 0.5, borderColor: '#eab664',
     borderRadius: 20,
     padding: 16,
     marginBottom: 20,
   },
   popupHeader: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14,
   },
   greenDot: { width: 8, height: 8, backgroundColor: '#CBDF90', borderRadius: 4 },
-  popupTitle: { fontSize: 13, fontWeight: '500', color: '#E8D8F0' },
-  popupSub: { fontSize: 11, color: '#9B9BC8', marginLeft: 'auto' },
-  popupOptions: { flexDirection: 'row', gap: 8 },
-  optionLight: {
-    flex: 1, backgroundColor: '#E8D8F0', borderRadius: 12, padding: 10, alignItems: 'center',
+  popupTitle: { fontSize: 13, fontWeight: '500', color: '#fff9e8' },
+  saveBtn: {
+    backgroundColor: '#7a4828',
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderWidth: 0.5,
+    borderColor: '#faa93e',
+    marginBottom: 10,
   },
-  optionDark: {
-    flex: 1, backgroundColor: '#3d3d8a', borderRadius: 12, padding: 10, alignItems: 'center',
-    borderWidth: 0.5, borderColor: '#5B5B9E',
-  },
-  optionEmoji: { fontSize: 20, marginBottom: 4 },
-  optionTitleDark: { fontSize: 11, fontWeight: '500', color: '#2B2B6E' },
-  optionSubDark: { fontSize: 9, color: '#6B6B9E', marginTop: 2 },
-  optionTitleLight: { fontSize: 11, fontWeight: '500', color: '#E8D8F0' },
-  optionSubLight: { fontSize: 9, color: '#9B9BC8', marginTop: 2 },
-  rescanBtn: { alignItems: 'center', marginTop: 10 },
-  rescanText: { fontSize: 11, color: '#9B9BC8' },
+  saveBtnText: { fontSize: 13, fontWeight: '500', color: '#fff9e8' },
+  rescanBtn: { alignItems: 'center', paddingVertical: 4 },
+  rescanText: { fontSize: 11, color: '#eab664' },
 
   shutterRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
   sideBtn: {
     width: 44, height: 44,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: 'rgba(94,54,32,0.65)',
     borderRadius: 14,
+    borderWidth: 0.5, borderColor: 'rgba(234,182,100,0.45)',
     justifyContent: 'center', alignItems: 'center',
   },
-  sideBtnIcon: { fontSize: 22 },
   shutter: {
     width: 68, height: 68, borderRadius: 34,
-    borderWidth: 3, borderColor: '#fff',
+    borderWidth: 3, borderColor: '#eab664',
     justifyContent: 'center', alignItems: 'center',
   },
-  shutterInner: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#fff' },
+  shutterInner: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#fff9e8' },
 
   permissionScreen: {
-    flex: 1, backgroundColor: '#1a1228',
+    flex: 1, backgroundColor: '#2d1a0d',
     justifyContent: 'center', alignItems: 'center', gap: 16,
   },
   permissionEmoji: { fontSize: 48 },
-  permissionText: { fontSize: 16, color: '#9B9BC8' },
+  permissionText: { fontSize: 16, color: '#eab664' },
   permissionBtn: {
-    backgroundColor: '#2B2B6E', borderRadius: 12,
+    backgroundColor: '#5e3620', borderRadius: 12,
     paddingHorizontal: 24, paddingVertical: 12,
   },
-  permissionBtnText: { color: '#E8D8F0', fontSize: 14, fontWeight: '500' },
+  permissionBtnText: { color: '#fff9e8', fontSize: 14, fontWeight: '500' },
 });

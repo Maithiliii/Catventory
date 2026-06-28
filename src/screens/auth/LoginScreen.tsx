@@ -14,14 +14,8 @@ import {
   Image,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../../types';
 
-type Props = {
-  navigation: NativeStackNavigationProp<RootStackParamList, 'Login'>;
-};
-
-export default function LoginScreen({ navigation }: Props) {
+export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [otpSent, setOtpSent] = useState(false);
@@ -83,18 +77,7 @@ export default function LoginScreen({ navigation }: Props) {
       Alert.alert('Invalid code', error.message);
       return;
     }
-    if (data.user) {
-      const { data: profile } = await supabase
-        .from('users')
-        .select('username')
-        .eq('id', data.user.id)
-        .single();
-      if (profile?.username) {
-        navigation.replace('Main');
-      } else {
-        navigation.replace('UsernameSetup');
-      }
-    }
+    // AppNavigator's onAuthStateChange handles routing after SIGNED_IN fires
   }
 
   function handleDigitChange(text: string, index: number) {

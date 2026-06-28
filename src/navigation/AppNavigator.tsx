@@ -9,27 +9,40 @@ import type { RootStackParamList } from '../types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
+type AuthState = 'loading' | 'unauthenticated' | 'needsUsername' | 'authenticated';
+
 export default function AppNavigator() {
-  const [initialRoute, setInitialRoute] = useState<keyof RootStackParamList | null>(null);
+  const [authState, setAuthState] = useState<AuthState>('loading');
 
   useEffect(() => {
-    async function checkSession() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        setInitialRoute('Login');
-        return;
-      }
+    async function resolve(userId: string) {
       const { data: profile } = await supabase
         .from('users')
         .select('username')
-        .eq('id', session.user.id)
+        .eq('id', userId)
         .single();
-      setInitialRoute(profile?.username ? 'Main' : 'UsernameSetup');
+      setAuthState(profile?.username ? 'authenticated' : 'needsUsername');
     }
-    checkSession();
+
+    // Check existing session on mount
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) { setAuthState('unauthenticated'); return; }
+      resolve(session.user.id);
+    });
+
+    // React to any future auth change (sign-in, sign-out, token refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
+        setAuthState('unauthenticated');
+      } else if (session?.user) {
+        resolve(session.user.id);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  if (!initialRoute) {
+  if (authState === 'loading') {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#faf2e2' }}>
         <Image
@@ -41,12 +54,14 @@ export default function AppNavigator() {
   }
 
   return (
-    <Stack.Navigator
-      initialRouteName={initialRoute}
-      screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="Login" component={LoginScreen} />
-      <Stack.Screen name="UsernameSetup" component={UsernameSetupScreen} />
-      <Stack.Screen name="Main" component={MainTabNavigator} />
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      {authState === 'authenticated' ? (
+        <Stack.Screen name="Main" component={MainTabNavigator} />
+      ) : authState === 'needsUsername' ? (
+        <Stack.Screen name="UsernameSetup" component={UsernameSetupScreen} />
+      ) : (
+        <Stack.Screen name="Login" component={LoginScreen} />
+      )}
     </Stack.Navigator>
   );
 }

@@ -9,10 +9,11 @@ import {
   Modal,
   Image,
 } from 'react-native';
-import { Bell, MapPin } from 'lucide-react-native';
+import { MapPin } from 'lucide-react-native';
 import MapboxGL from '@rnmapbox/maps';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../lib/supabase';
+import { Skeleton } from '../../components/Skeleton';
 import type { Cat } from '../../types';
 
 function getGreeting() {
@@ -41,11 +42,14 @@ function formatLocation(cat: Cat) {
 export default function ExploreScreen() {
   const [username, setUsername] = useState('');
   const [recentCats, setRecentCats] = useState<Cat[]>([]);
+  const [usernameMap, setUsernameMap] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
   const [mapOpen, setMapOpen] = useState(false);
   const [fullMapSelected, setFullMapSelected] = useState<Cat | null>(null);
 
   useFocusEffect(
     useCallback(() => {
+      setLoading(true);
       load();
     }, []),
   );
@@ -61,36 +65,54 @@ export default function ExploreScreen() {
       .single();
     if (profile) setUsername((profile as any).username);
 
+    // Fetch all live users and their usernames
+    const { data: liveUsers } = await supabase
+      .from('users')
+      .select('id, username')
+      .eq('is_live', true);
+
+    if (!liveUsers?.length) { setRecentCats([]); setLoading(false); return; }
+
+    const map: Record<string, string> = {};
+    liveUsers.forEach(u => { map[(u as any).id] = (u as any).username; });
+    setUsernameMap(map);
+
+    const liveIds = liveUsers.map(u => (u as any).id);
+
     const { data } = await supabase
-      .from('collections')
-      .select('cats(id, cat_number, name, emoji, photo_url, lat, lng, location_name, spotted_at, spotted_by)')
-      .eq('user_id', user.id);
+      .from('cats')
+      .select('id, cat_number, name, photo_url, lat, lng, location_name, spotted_at, spotted_by, collections!inner(cat_id)')
+      .in('spotted_by', liveIds)
+      .order('spotted_at', { ascending: false })
+      .limit(20);
 
     if (data) {
-      const mapped: Cat[] = (data as any[])
-        .filter(row => row.cats)
-        .map(row => ({
-          id: row.cats.id,
-          catNumber: row.cats.cat_number,
-          name: row.cats.name,
-          emoji: row.cats.emoji,
-          photoUri: row.cats.photo_url ?? undefined,
-          lat: row.cats.lat ?? undefined,
-          lng: row.cats.lng ?? undefined,
-          locationName: row.cats.location_name ?? undefined,
-          spottedAt: row.cats.spotted_at,
-          spottedBy: row.cats.spotted_by,
-        } as Cat))
-        .sort((a, b) => new Date(b.spottedAt).getTime() - new Date(a.spottedAt).getTime())
-        .slice(0, 10);
+      const mapped: Cat[] = (data as any[]).map(row => ({
+        id: row.id,
+        catNumber: row.cat_number,
+        name: row.name,
+
+        photoUri: row.photo_url ?? undefined,
+        lat: row.lat ?? undefined,
+        lng: row.lng ?? undefined,
+        locationName: row.location_name ?? undefined,
+        spottedAt: row.spotted_at,
+        spottedBy: row.spotted_by,
+      } as Cat));
       setRecentCats(mapped);
     }
+    setLoading(false);
   }
 
   const catsWithLocation = recentCats.filter(c => c.lat != null && c.lng != null && c.photoUri?.startsWith('http'));
   const mapCenter: [number, number] = catsWithLocation.length > 0
     ? [catsWithLocation[0].lng!, catsWithLocation[0].lat!]
     : [78.9629, 20.5937];
+
+  const mapBounds = catsWithLocation.length > 1 ? {
+    ne: [Math.max(...catsWithLocation.map(c => c.lng!)), Math.max(...catsWithLocation.map(c => c.lat!))] as [number, number],
+    sw: [Math.min(...catsWithLocation.map(c => c.lng!)), Math.min(...catsWithLocation.map(c => c.lat!))] as [number, number],
+  } : null;
 
   function renderRecentCard({ item }: { item: Cat }) {
     const loc = formatLocation(item);
@@ -106,10 +128,10 @@ export default function ExploreScreen() {
         </View>
         <View style={styles.recentInfo}>
           <Text style={styles.recentName} numberOfLines={1}>{item.name}</Text>
-          <Text style={styles.recentSpotter} numberOfLines={1}>@{username}</Text>
-          <View style={styles.recentLocRow}>
-            <MapPin size={10} color="#a09070" strokeWidth={1.8} />
-            <Text style={styles.recentMeta} numberOfLines={1}>{meta}</Text>
+          <Text style={styles.recentSpotter} numberOfLines={1}>@{usernameMap[item.spottedBy] || username}</Text>
+          <View style={[styles.recentLocRow, styles.recentLocRowTop]}>
+            <MapPin size={10} color="#a09070" strokeWidth={1.8} style={styles.recentLocIcon} />
+            <Text style={styles.recentMeta}>{meta}</Text>
           </View>
         </View>
         <View style={[styles.pill, isNew ? styles.pillNew : styles.pillSpotted]}>
@@ -131,9 +153,6 @@ export default function ExploreScreen() {
           <Text style={styles.greeting}>{getGreeting()}</Text>
           <Text style={styles.username}>@{username || '…'} 🐾</Text>
         </View>
-        <TouchableOpacity style={styles.bellBtn}>
-          <Bell size={18} color="#faa93e" strokeWidth={1.8} />
-        </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -149,22 +168,31 @@ export default function ExploreScreen() {
             logoEnabled={false}
             attributionEnabled={false}
             scaleBarEnabled={false}>
-            <MapboxGL.Camera
-              centerCoordinate={mapCenter}
-              zoomLevel={catsWithLocation.length > 0 ? 11 : 3}
-              animationDuration={0}
-            />
+            {mapBounds ? (
+              <MapboxGL.Camera
+                bounds={{ ...mapBounds, paddingTop: 48, paddingBottom: 48, paddingLeft: 32, paddingRight: 32 }}
+                animationDuration={0}
+              />
+            ) : (
+              <MapboxGL.Camera
+                centerCoordinate={mapCenter}
+                zoomLevel={catsWithLocation.length > 0 ? 13 : 3}
+                animationDuration={0}
+              />
+            )}
             {catsWithLocation.map(cat => (
               <MapboxGL.MarkerView
                 key={cat.id}
                 id={cat.id}
-                coordinate={[cat.lng!, cat.lat!]}>
+                coordinate={[cat.lng!, cat.lat!]}
+                allowOverflowView>
                 <View style={styles.markerWrap}>
                   <View style={styles.mapMarker}>
                     <Image source={{ uri: cat.photoUri }} style={styles.mapMarkerImage} />
                   </View>
                   <View style={styles.markerLabel}>
                     <Text style={styles.markerLabelName} numberOfLines={1}>{cat.name}</Text>
+                    <Text style={styles.markerLabelSpotter} numberOfLines={1}>@{usernameMap[cat.spottedBy] || ''}</Text>
                   </View>
                 </View>
               </MapboxGL.MarkerView>
@@ -183,7 +211,21 @@ export default function ExploreScreen() {
         {/* Recently spotted */}
         <Text style={styles.sectionTitle}>Recently spotted</Text>
 
-        {recentCats.length === 0 ? (
+        {loading ? (
+          <View style={styles.recentList}>
+            {[0, 1, 2].map(i => (
+              <View key={i} style={styles.recentCard}>
+                <Skeleton style={styles.skeletonAvatar} />
+                <View style={styles.skeletonInfo}>
+                  <Skeleton style={styles.skeletonName} />
+                  <Skeleton style={styles.skeletonMeta} />
+                  <Skeleton style={styles.skeletonMeta2} />
+                </View>
+                <Skeleton style={styles.skeletonPill} />
+              </View>
+            ))}
+          </View>
+        ) : recentCats.length === 0 ? (
           <View style={styles.emptyRow}>
             <Text style={styles.emptyText}>No cats spotted yet. Go find some!</Text>
             <Image source={require('../../../assets/Icons/Paws.png')} style={styles.emptyPaw} />
@@ -213,12 +255,24 @@ export default function ExploreScreen() {
             attributionEnabled={false}
             scaleBarEnabled={false}
             onPress={() => setFullMapSelected(null)}>
-            <MapboxGL.Camera
-              centerCoordinate={mapCenter}
-              zoomLevel={catsWithLocation.length > 0 ? 11 : 3}
-            />
+            {mapBounds ? (
+              <MapboxGL.Camera
+                bounds={{ ...mapBounds, paddingTop: 80, paddingBottom: 80, paddingLeft: 60, paddingRight: 60 }}
+                animationDuration={0}
+              />
+            ) : (
+              <MapboxGL.Camera
+                centerCoordinate={mapCenter}
+                zoomLevel={catsWithLocation.length > 0 ? 13 : 3}
+                animationDuration={0}
+              />
+            )}
             {catsWithLocation.map(cat => (
-              <MapboxGL.MarkerView key={cat.id} id={cat.id} coordinate={[cat.lng!, cat.lat!]}>
+              <MapboxGL.MarkerView
+                key={cat.id}
+                id={cat.id}
+                coordinate={[cat.lng!, cat.lat!]}
+                allowOverflowView>
                 <TouchableOpacity
                   activeOpacity={0.85}
                   onPress={() => setFullMapSelected(fullMapSelected?.id === cat.id ? null : cat)}>
@@ -228,7 +282,7 @@ export default function ExploreScreen() {
                     </View>
                     <View style={styles.markerLabel}>
                       <Text style={styles.markerLabelName} numberOfLines={1}>{cat.name}</Text>
-                      <Text style={styles.markerLabelSpotter} numberOfLines={1}>@{username}</Text>
+                      <Text style={styles.markerLabelSpotter} numberOfLines={1}>@{usernameMap[cat.spottedBy] || ''}</Text>
                     </View>
                   </View>
                 </TouchableOpacity>
@@ -245,7 +299,7 @@ export default function ExploreScreen() {
               </View>
               <View style={styles.fullMapInfoText}>
                 <Text style={styles.fullMapInfoName}>{fullMapSelected.name}</Text>
-                <Text style={styles.fullMapInfoSpotter}>@{username}</Text>
+                <Text style={styles.fullMapInfoSpotter}>@{usernameMap[fullMapSelected.spottedBy] || ''}</Text>
               </View>
               <TouchableOpacity style={styles.fullMapInfoDismiss} onPress={() => setFullMapSelected(null)}>
                 <Text style={styles.fullMapInfoDismissText}>✕</Text>
@@ -272,12 +326,6 @@ const styles = StyleSheet.create({
   },
   greeting: { fontSize: 13, color: '#eab664', marginBottom: 4 },
   username: { fontSize: 24, fontWeight: '500', color: '#fff9e8', letterSpacing: -0.3 },
-  bellBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: '#7a4828', borderWidth: 1.5, borderColor: '#faa93e',
-    justifyContent: 'center', alignItems: 'center',
-  },
-
   scroll: { flex: 1 },
 
   mapCard: {
@@ -363,6 +411,8 @@ const styles = StyleSheet.create({
   recentName: { fontSize: 13, fontWeight: '500', color: '#5e3620' },
   recentSpotter: { fontSize: 10, color: '#a09070' },
   recentLocRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  recentLocRowTop: { alignItems: 'flex-start' },
+  recentLocIcon: { marginTop: 1 },
   recentMeta: { fontSize: 11, color: '#a09070', flex: 1 },
   pill: {
     paddingHorizontal: 10,
@@ -375,6 +425,13 @@ const styles = StyleSheet.create({
   pillText: { fontSize: 10, fontWeight: '500' },
   pillTextNew: { color: '#fff9e8' },
   pillTextSpotted: { color: '#5e3620' },
+
+  skeletonAvatar: { width: 46, height: 46, borderRadius: 12, flexShrink: 0 },
+  skeletonInfo: { flex: 1, gap: 6 },
+  skeletonName: { width: '55%', height: 13, borderRadius: 6 },
+  skeletonMeta: { width: '35%', height: 10, borderRadius: 5 },
+  skeletonMeta2: { width: '70%', height: 10, borderRadius: 5 },
+  skeletonPill: { width: 48, height: 24, borderRadius: 20, flexShrink: 0 },
 
   mapMarkerSelected: { borderColor: '#faa93e', borderWidth: 3, transform: [{ scale: 1.15 }] },
 

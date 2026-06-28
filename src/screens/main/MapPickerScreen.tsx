@@ -16,6 +16,7 @@ import { MAPBOX_PUBLIC_TOKEN } from '@env';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { CollectionStackParamList } from '../../types';
+import { pendingLocation } from '../../lib/pendingLocation';
 
 type Props = {
   navigation: NativeStackNavigationProp<CollectionStackParamList, 'MapPicker'>;
@@ -135,12 +136,8 @@ export default function MapPickerScreen({ navigation }: Props) {
     } catch {
       // fall through with empty name
     }
-    const prevCat = (navigation.getState().routes.find(r => r.name === 'CatEdit')?.params as any);
-    navigation.navigate('CatEdit', {
-      cat: prevCat?.cat,
-      isNew: prevCat?.isNew,
-      selectedLocation: { lat: center[1], lng: center[0], name: locationName },
-    });
+    pendingLocation.set({ lat: center[1], lng: center[0], name: locationName });
+    navigation.goBack();
     setConfirming(false);
   }
 

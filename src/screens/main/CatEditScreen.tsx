@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -16,10 +16,12 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
 import { ChevronLeft, Lock, MapPin, Map, Camera } from 'lucide-react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@env';
 import { supabase } from '../../lib/supabase';
+import { pendingLocation } from '../../lib/pendingLocation';
 import type { Cat, CollectionStackParamList } from '../../types';
 
 type Props = {
@@ -42,7 +44,6 @@ export default function CatEditScreen({ navigation, route }: Props) {
   const { cat, isNew, selectedLocation } = route.params;
 
   const [name, setName] = useState(cat.name || '');
-  const [emoji, setEmoji] = useState(cat.emoji || '🐱');
   const [locationName, setLocationName] = useState(
     selectedLocation?.name || cat.locationName || '',
   );
@@ -56,6 +57,18 @@ export default function CatEditScreen({ navigation, route }: Props) {
   const [saving, setSaving] = useState(false);
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [removing, setRemoving] = useState(false);
+
+  // Pick up location chosen in MapPicker — goBack() preserves our state, no remount
+  useFocusEffect(
+    useCallback(() => {
+      const loc = pendingLocation.consume();
+      if (loc) {
+        setLat(loc.lat);
+        setLng(loc.lng);
+        setLocationName(loc.name);
+      }
+    }, []),
+  );
 
   useEffect(() => {
     if (!isNew) return;
@@ -141,7 +154,7 @@ export default function CatEditScreen({ navigation, route }: Props) {
       const { data: catData, error: catError } = await supabase
         .from('cats')
         .insert({
-          name: name.trim(), emoji,
+          name: name.trim(),
           location_name: locationName || null,
           lat: lat ?? null, lng: lng ?? null,
           spotted_at: spottedAt, spotted_by: user.id,
@@ -180,7 +193,7 @@ export default function CatEditScreen({ navigation, route }: Props) {
       const { error } = await supabase
         .from('cats')
         .update({
-          name: name.trim(), emoji,
+          name: name.trim(),
           location_name: locationName || null,
           lat: lat ?? null, lng: lng ?? null,
           spotted_at: spottedAt, spotted_by: user.id,
@@ -203,12 +216,17 @@ export default function CatEditScreen({ navigation, route }: Props) {
     setRemoving(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setRemoving(false); return; }
-    const { error } = await supabase
+    const { error: collErr } = await supabase
       .from('collections')
       .delete()
       .eq('user_id', user.id)
       .eq('cat_id', cat.id);
-    if (error) { Alert.alert('Error', error.message); setRemoving(false); return; }
+    if (collErr) { Alert.alert('Error', collErr.message); setRemoving(false); return; }
+    const { error: catErr } = await supabase
+      .from('cats')
+      .delete()
+      .eq('id', cat.id);
+    if (catErr) { Alert.alert('Error', catErr.message); setRemoving(false); return; }
     setShowRemoveModal(false);
     navigation.popToTop();
   }
@@ -243,7 +261,7 @@ export default function CatEditScreen({ navigation, route }: Props) {
             {photoUri ? (
               <Image source={{ uri: photoUri }} style={styles.photo} />
             ) : (
-              <Text style={styles.bigEmoji}>{emoji}</Text>
+              <Text style={styles.bigEmoji}>🐾</Text>
             )}
             <View style={styles.replacePhotoBtn}>
               <Camera size={13} color="#fff9e8" strokeWidth={2} />

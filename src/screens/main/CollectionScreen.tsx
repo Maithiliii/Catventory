@@ -15,6 +15,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Image as ImageIcon, Map, Pencil, Clock, MapPin } from 'lucide-react-native';
 import { MAPBOX_PUBLIC_TOKEN } from '@env';
 import { supabase } from '../../lib/supabase';
+import { Skeleton } from '../../components/Skeleton';
 import type { Cat, CollectionStackParamList } from '../../types';
 
 type NavProp = NativeStackNavigationProp<CollectionStackParamList, 'CollectionList'>;
@@ -30,9 +31,10 @@ function formatDate(iso: string) {
   const d = new Date(iso);
   const day = d.getDate().toString().padStart(2, '0');
   const mon = d.toLocaleString('en', { month: 'short' });
+  const yr = d.getFullYear();
   const hrs = d.getHours().toString().padStart(2, '0');
   const min = d.getMinutes().toString().padStart(2, '0');
-  return `${day} ${mon} · ${hrs}:${min}`;
+  return `${day} ${mon} ${yr} · ${hrs}:${min}`;
 }
 
 function formatCatId(num: number) {
@@ -71,20 +73,22 @@ export default function CollectionScreen() {
   const navigation = useNavigation<NavProp>();
   const [cats, setCats] = useState<Cat[]>([]);
   const [userId, setUserId] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useFocusEffect(
     useCallback(() => {
+      setLoading(true);
       loadCats();
     }, []),
   );
 
   async function loadCats() {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) { setLoading(false); return; }
     setUserId(user.id);
     const { data } = await supabase
       .from('collections')
-      .select('cats(id, cat_number, name, emoji, photo_url, lat, lng, location_name, spotted_at, spotted_by)')
+      .select('cats(id, cat_number, name, photo_url, lat, lng, location_name, spotted_at, spotted_by)')
       .eq('user_id', user.id);
     if (data) {
       setCats(
@@ -93,7 +97,7 @@ export default function CollectionScreen() {
             id: row.cats.id,
             catNumber: row.cats.cat_number,
             name: row.cats.name,
-            emoji: row.cats.emoji,
+
             photoUri: row.cats.photo_url ?? undefined,
             lat: row.cats.lat ?? undefined,
             lng: row.cats.lng ?? undefined,
@@ -101,9 +105,10 @@ export default function CollectionScreen() {
             spottedAt: row.cats.spotted_at,
             spottedBy: row.cats.spotted_by,
           } as Cat))
-          .sort((a, b) => a.catNumber - b.catNumber),
+          .sort((a, b) => new Date(b.spottedAt).getTime() - new Date(a.spottedAt).getTime()),
       );
     }
+    setLoading(false);
   }
 
   async function addFromGallery() {
@@ -151,7 +156,6 @@ export default function CollectionScreen() {
         id: '',
         catNumber: 0,
         name: 'New Cat',
-        emoji: '🐱',
         photoUri,
         spottedAt,
         lat,
@@ -192,9 +196,9 @@ export default function CollectionScreen() {
             <Text style={styles.metaText}>{formatDate(item.spottedAt)}</Text>
           </View>
           {hasLocation ? (
-            <View style={styles.metaRow}>
-              <MapPin size={10} color="#eab664" strokeWidth={1.8} />
-              <Text style={styles.metaText} numberOfLines={1}>
+            <View style={[styles.metaRow, styles.metaRowTop]}>
+              <MapPin size={10} color="#eab664" strokeWidth={1.8} style={styles.metaIcon} />
+              <Text style={styles.metaText}>
                 {item.locationName || formatCoords(item.lat, item.lng)}
               </Text>
             </View>
@@ -241,15 +245,38 @@ export default function CollectionScreen() {
       </View>
 
       {/* Grid */}
-      <FlatList
-        data={cats}
-        keyExtractor={item => item.id}
-        renderItem={renderTile}
-        numColumns={2}
-        contentContainerStyle={styles.gridContent}
-        showsVerticalScrollIndicator={false}
-        columnWrapperStyle={styles.row}
-      />
+      {loading && cats.length > 0 ? (
+        <View style={styles.gridContent}>
+          <View style={[styles.row, { flexDirection: 'row' }]}>
+            {[0, 1].map(j => (
+              <View key={j} style={[styles.tile, { width: '48.5%' }]}>
+                <Skeleton style={styles.skeletonPhoto} />
+                <View style={styles.infoArea}>
+                  <Skeleton style={styles.skeletonTag} />
+                  <Skeleton style={styles.skeletonLine} />
+                  <Skeleton style={styles.skeletonLine} />
+                </View>
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : !loading && cats.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Image source={require('../../../assets/Icons/Paws.png')} style={styles.emptyPaw} />
+          <Text style={styles.emptyTitle}>No cats yet</Text>
+          <Text style={styles.emptySub}>Take a photo or add from gallery to start your collection</Text>
+        </View>
+      ) : !loading ? (
+        <FlatList
+          data={cats}
+          keyExtractor={item => item.id}
+          renderItem={renderTile}
+          numColumns={2}
+          contentContainerStyle={styles.gridContent}
+          showsVerticalScrollIndicator={false}
+          columnWrapperStyle={styles.row}
+        />
+      ) : null}
 
     </View>
   );
@@ -350,24 +377,43 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 40,
+    paddingBottom: 60,
+  },
+  emptyPaw: { width: 52, height: 52, resizeMode: 'contain', tintColor: '#d8c8b0', marginBottom: 4 },
+  emptyTitle: { fontSize: 16, fontWeight: '500', color: '#5e3620' },
+  emptySub: { fontSize: 13, color: '#a09070', textAlign: 'center', lineHeight: 20 },
+
+  skeletonPhoto: { width: '100%', height: 120, borderRadius: 0 },
+  skeletonTag: { width: '60%', height: 22, borderRadius: 20, marginBottom: 8 },
+  skeletonLine: { width: '80%', height: 10, borderRadius: 5, marginBottom: 5 },
+
   infoArea: { padding: 10 },
   nameTag: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 4,
     backgroundColor: '#fdfcee',
     borderWidth: 0.5,
     borderColor: '#eab664',
-    borderRadius: 20,
+    borderRadius: 12,
     paddingHorizontal: 10,
-    paddingVertical: 3,
+    paddingVertical: 4,
     alignSelf: 'flex-start',
+    maxWidth: '100%',
     marginBottom: 6,
   },
-  nameTagPaw: { fontSize: 12 },
-  nameTagText: { fontSize: 11, fontWeight: '500', color: '#5e3620' },
+  nameTagPaw: { fontSize: 12, flexShrink: 0, lineHeight: 18 },
+  nameTagText: { fontSize: 11, fontWeight: '500', color: '#5e3620', flexShrink: 1, flexWrap: 'wrap' },
 
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 3 },
+  metaRowTop: { alignItems: 'flex-start' },
+  metaIcon: { marginTop: 1 },
   metaText: { fontSize: 10, color: '#eab664', flex: 1 },
   noLocText: { fontSize: 10, color: '#c0626b', flex: 1 },
 });

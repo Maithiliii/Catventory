@@ -36,12 +36,15 @@ export default function CatMapScreen({ navigation }: Props) {
   async function load() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
+
     const { data: prof } = await supabase.from('users').select('username').eq('id', user.id).single();
     if (prof) setUsername((prof as any).username ?? '');
+
     const { data } = await supabase
       .from('collections')
-      .select('cats(id, cat_number, name, emoji, photo_url, lat, lng, location_name, spotted_at, spotted_by)')
+      .select('cats(id, cat_number, name, photo_url, lat, lng, location_name, spotted_at, spotted_by)')
       .eq('user_id', user.id);
+
     if (data) {
       setCats(
         (data as any[])
@@ -50,8 +53,8 @@ export default function CatMapScreen({ navigation }: Props) {
             id: row.cats.id,
             catNumber: row.cats.cat_number,
             name: row.cats.name,
-            emoji: row.cats.emoji,
-            photoUri: row.cats.photo_url ?? undefined,
+
+            photoUri: row.cats.photo_url,
             lat: row.cats.lat,
             lng: row.cats.lng,
             locationName: row.cats.location_name ?? undefined,
@@ -65,6 +68,11 @@ export default function CatMapScreen({ navigation }: Props) {
   const center: [number, number] = cats.length > 0
     ? [cats[0].lng!, cats[0].lat!]
     : [78.9629, 20.5937];
+
+  const bounds = cats.length > 1 ? {
+    ne: [Math.max(...cats.map(c => c.lng!)), Math.max(...cats.map(c => c.lat!))] as [number, number],
+    sw: [Math.min(...cats.map(c => c.lng!)), Math.min(...cats.map(c => c.lat!))] as [number, number],
+  } : null;
 
   return (
     <View style={styles.root}>
@@ -86,16 +94,24 @@ export default function CatMapScreen({ navigation }: Props) {
         attributionEnabled={false}
         scaleBarEnabled={false}
         onPress={() => setSelected(null)}>
-        <MapboxGL.Camera
-          centerCoordinate={center}
-          zoomLevel={cats.length > 0 ? 11 : 4}
-          animationDuration={0}
-        />
+        {bounds ? (
+          <MapboxGL.Camera
+            bounds={{ ...bounds, paddingTop: 80, paddingBottom: 80, paddingLeft: 60, paddingRight: 60 }}
+            animationDuration={0}
+          />
+        ) : (
+          <MapboxGL.Camera
+            centerCoordinate={center}
+            zoomLevel={cats.length > 0 ? 13 : 4}
+            animationDuration={0}
+          />
+        )}
         {cats.map(cat => (
           <MapboxGL.MarkerView
             key={cat.id}
             id={cat.id}
-            coordinate={[cat.lng!, cat.lat!]}>
+            coordinate={[cat.lng!, cat.lat!]}
+            allowOverflowView>
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={() => setSelected(selected?.id === cat.id ? null : cat)}>
@@ -121,6 +137,7 @@ export default function CatMapScreen({ navigation }: Props) {
           </View>
           <View style={styles.infoText}>
             <Text style={styles.infoName}>{selected.name}</Text>
+            <Text style={styles.infoSpotter} numberOfLines={1}>@{username}</Text>
             <Text style={styles.infoLoc} numberOfLines={1}>
               {selected.locationName || formatCoords(selected.lat!, selected.lng!)}
             </Text>
@@ -220,7 +237,8 @@ const styles = StyleSheet.create({
   },
   infoAvatarImg: { width: 52, height: 52, resizeMode: 'cover' },
   infoText: { flex: 1 },
-  infoName: { fontSize: 15, fontWeight: '500', color: '#5e3620', marginBottom: 3 },
+  infoName: { fontSize: 15, fontWeight: '500', color: '#5e3620', marginBottom: 1 },
+  infoSpotter: { fontSize: 11, color: '#eab664', marginBottom: 3 },
   infoLoc: { fontSize: 11, color: '#a09070' },
   infoDismiss: { padding: 6 },
   infoDismissText: { fontSize: 15, color: '#a09070' },

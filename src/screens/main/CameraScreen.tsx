@@ -11,6 +11,7 @@ import {
   PermissionsAndroid,
   Platform,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import {
   Camera,
@@ -21,7 +22,7 @@ import {
 import { X, Zap, ZapOff, SwitchCamera } from 'lucide-react-native';
 import { useIsFocused, useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import MapboxGL from '@rnmapbox/maps';
+import Geolocation from '@react-native-community/geolocation';
 import { MAPBOX_PUBLIC_TOKEN } from '@env';
 import type { MainTabParamList } from '../../types';
 
@@ -74,9 +75,21 @@ export default function CameraScreen() {
   // Corner color interpolation (white → green on detect)
   const cornerColor = useRef(new Animated.Value(0)).current;
 
+  // Step 1: request camera permission on mount
   useEffect(() => {
     if (!hasPermission) requestPermission();
   }, [hasPermission, requestPermission]);
+
+  // Step 2: once camera permission is granted, request location permission
+  useEffect(() => {
+    if (!hasPermission) return;
+    let active = true;
+    requestLocationPermission().then(granted => {
+      if (!active) return;
+      setLocationGranted(granted);
+    });
+    return () => { active = false; };
+  }, [hasPermission]);
 
   useFocusEffect(
     useCallback(() => {
@@ -85,13 +98,8 @@ export default function CameraScreen() {
       setDetection('scanning');
       setPhotoUri(null);
       setSaving(false);
-      requestLocationPermission().then(granted => {
-        setLocationGranted(granted);
-        if (granted) MapboxGL.locationManager.start();
-      });
       return () => {
         StatusBar.setTranslucent(false);
-        MapboxGL.locationManager.stop();
       };
     }, []),
   );
@@ -150,23 +158,26 @@ export default function CameraScreen() {
 
     if (locationGranted) {
       try {
-        const loc = MapboxGL.locationManager.getLastKnownLocation() as any;
-        if (loc?.geometry?.coordinates) {
-          const [locLng, locLat] = loc.geometry.coordinates as [number, number];
-          lng = locLng;
-          lat = locLat;
-          try {
-            const resp = await fetch(
-              `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?types=neighborhood,place&access_token=${MAPBOX_PUBLIC_TOKEN}`,
-            );
-            const json = await resp.json();
-            locationName = json.features?.[0]?.place_name;
-          } catch {
-            // locationName stays undefined, user can add manually
-          }
+        const position = await new Promise<any>((resolve, reject) => {
+          Geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: false,
+            timeout: 20000,
+            maximumAge: 60000,
+          });
+        });
+        lat = position.coords.latitude;
+        lng = position.coords.longitude;
+        try {
+          const resp = await fetch(
+            `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?types=neighborhood,place&access_token=${MAPBOX_PUBLIC_TOKEN}`,
+          );
+          const json = await resp.json();
+          locationName = json.features?.[0]?.place_name;
+        } catch {
+          // locationName stays undefined, user can add manually
         }
       } catch {
-        // proceed without location
+        // GPS timed out or denied — proceed without location
       }
     }
 
@@ -178,7 +189,6 @@ export default function CameraScreen() {
           id: '',
           catNumber: 0,
           name: 'New Cat',
-          emoji: '🐱',
           photoUri,
           spottedAt: new Date().toISOString(),
           lat,
@@ -201,15 +211,7 @@ export default function CameraScreen() {
   }
 
   if (!hasPermission) {
-    return (
-      <View style={styles.permissionScreen}>
-        <Text style={styles.permissionEmoji}>📷</Text>
-        <Text style={styles.permissionText}>Camera access needed</Text>
-        <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>
-          <Text style={styles.permissionBtnText}>Allow camera</Text>
-        </TouchableOpacity>
-      </View>
-    );
+    return <View style={styles.root} />;
   }
 
   if (!device) {
@@ -225,16 +227,18 @@ export default function CameraScreen() {
     <View style={styles.root}>
       <StatusBar barStyle="light-content" />
 
-      {/* Camera viewfinder */}
+      {/* Camera viewfinder — hidden once photo is taken */}
       <Camera
         style={StyleSheet.absoluteFill}
         device={device}
-        isActive={isFocused}
+        isActive={isFocused && !photoUri}
         outputs={[photoOutput]}
       />
 
-      {/* Dark overlay when detected */}
-      {detection === 'detected' && <View style={styles.overlay} />}
+      {/* Captured photo preview — replaces camera after shutter */}
+      {photoUri && (
+        <Image source={{ uri: photoUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      )}
 
       {/* Top bar */}
       <View style={styles.topBar}>
@@ -246,48 +250,53 @@ export default function CameraScreen() {
             {detection === 'scanning' ? 'point at a cat' : 'cat found!'}
           </Text>
         </View>
-        <TouchableOpacity
-          style={styles.topBtn}
-          onPress={() => setFlash(f => (f === 'off' ? 'on' : 'off'))}>
-          {flash === 'on'
-            ? <Zap size={16} color="#fff" strokeWidth={2} />
-            : <ZapOff size={16} color="#fff" strokeWidth={2} />}
-        </TouchableOpacity>
+        {/* Flash toggle only relevant while scanning */}
+        {!photoUri ? (
+          <TouchableOpacity
+            style={styles.topBtn}
+            onPress={() => setFlash(f => (f === 'off' ? 'on' : 'off'))}>
+            {flash === 'on'
+              ? <Zap size={16} color="#fff" strokeWidth={2} />
+              : <ZapOff size={16} color="#fff" strokeWidth={2} />}
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.topBtn} />
+        )}
       </View>
 
-      {/* Detection frame */}
-      <View style={styles.frameWrap} pointerEvents="none">
-        <View style={styles.frameInner}>
-          <Animated.View
-            style={[
-              styles.frameBorder,
-              { borderColor: animatedCornerColor, opacity: detection === 'scanning' ? 0.2 : 0.4 },
-            ]}
-          />
-          {(['tl', 'tr', 'bl', 'br'] as const).map(pos => (
+      {/* Detection frame — only while scanning */}
+      {!photoUri && (
+        <View style={styles.frameWrap} pointerEvents="none">
+          <View style={styles.frameInner}>
             <Animated.View
-              key={pos}
               style={[
-                styles.corner,
-                styles[pos],
-                { borderColor: animatedCornerColor, opacity: detection === 'scanning' ? pulseAnim : 1 },
+                styles.frameBorder,
+                { borderColor: animatedCornerColor, opacity: 0.2 },
               ]}
             />
-          ))}
-          <View style={styles.frameLabel}>
-            {detection === 'scanning' && (
+            {(['tl', 'tr', 'bl', 'br'] as const).map(pos => (
+              <Animated.View
+                key={pos}
+                style={[
+                  styles.corner,
+                  styles[pos],
+                  { borderColor: animatedCornerColor, opacity: pulseAnim },
+                ]}
+              />
+            ))}
+            <View style={styles.frameLabel}>
               <Animated.Text style={[styles.scanningText, { opacity: pulseAnim }]}>
                 scanning...
               </Animated.Text>
-            )}
+            </View>
           </View>
         </View>
-      </View>
+      )}
 
       {/* Bottom section */}
       <View style={styles.bottomSection}>
 
-        {/* Cat detected popup */}
+        {/* Cat detected popup — shown over captured photo */}
         {detection === 'detected' && (
           <View style={styles.popup}>
             <View style={styles.popupHeader}>
@@ -309,21 +318,23 @@ export default function CameraScreen() {
           </View>
         )}
 
-        {/* Shutter row */}
-        <View style={styles.shutterRow}>
-          <View style={styles.sideBtn} />
-          <TouchableOpacity
-            style={styles.shutter}
-            onPress={detection === 'scanning' ? handleShutter : resetDetection}
-            activeOpacity={0.8}>
-            <View style={styles.shutterInner} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.sideBtn}
-            onPress={() => setPosition(p => (p === 'back' ? 'front' : 'back'))}>
-            <SwitchCamera size={22} color="#fff" strokeWidth={1.8} />
-          </TouchableOpacity>
-        </View>
+        {/* Shutter row — only while scanning */}
+        {!photoUri && (
+          <View style={styles.shutterRow}>
+            <View style={styles.sideBtn} />
+            <TouchableOpacity
+              style={styles.shutter}
+              onPress={handleShutter}
+              activeOpacity={0.8}>
+              <View style={styles.shutterInner} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.sideBtn}
+              onPress={() => setPosition(p => (p === 'back' ? 'front' : 'back'))}>
+              <SwitchCamera size={22} color="#fff" strokeWidth={1.8} />
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -331,12 +342,6 @@ export default function CameraScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
-
-  overlay: {
-    position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-  },
 
   topBar: {
     position: 'absolute',
@@ -454,15 +459,4 @@ const styles = StyleSheet.create({
   },
   shutterInner: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#fff9e8' },
 
-  permissionScreen: {
-    flex: 1, backgroundColor: '#2d1a0d',
-    justifyContent: 'center', alignItems: 'center', gap: 16,
-  },
-  permissionEmoji: { fontSize: 48 },
-  permissionText: { fontSize: 16, color: '#eab664' },
-  permissionBtn: {
-    backgroundColor: '#5e3620', borderRadius: 12,
-    paddingHorizontal: 24, paddingVertical: 12,
-  },
-  permissionBtnText: { color: '#fff9e8', fontSize: 14, fontWeight: '500' },
 });

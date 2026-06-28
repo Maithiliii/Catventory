@@ -2,7 +2,6 @@ export interface Cat {
   id: string;
   catNumber: number; // sequential number for #00001 display
   name: string;
-  emoji: string;
   photoUri?: string;
   lat?: number;
   lng?: number;

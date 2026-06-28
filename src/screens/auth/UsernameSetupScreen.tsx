@@ -11,22 +11,62 @@ import {
   Platform,
   ScrollView,
   StatusBar,
+  Image,
 } from 'react-native';
-import { User, Camera as CameraIcon } from 'lucide-react-native';
+import { Camera as CameraIcon } from 'lucide-react-native';
+import LottieView from 'lottie-react-native';
+import { launchImageLibrary } from 'react-native-image-picker';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@env';
 import { supabase } from '../../lib/supabase';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../../types';
 
-type Props = {
-  navigation: NativeStackNavigationProp<RootStackParamList, 'UsernameSetup'>;
-};
-
-export default function UsernameSetupScreen({ navigation }: Props) {
+export default function UsernameSetupScreen() {
   const [username, setUsername] = useState('');
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   function handleUsernameChange(text: string) {
     setUsername(text.replace(/[^a-zA-Z0-9_]/g, ''));
+  }
+
+  async function pickAvatar() {
+    const result = await launchImageLibrary({ mediaType: 'photo', selectionLimit: 1, quality: 0.8 });
+    if (result.didCancel || !result.assets?.length) return;
+    const uri = result.assets[0].uri;
+    if (uri) setAvatarUri(uri);
+  }
+
+  async function uploadAvatar(userId: string): Promise<string | null> {
+    if (!avatarUri) return null;
+    try {
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.onload = () => resolve(xhr.response);
+        xhr.onerror = () => reject(new Error('Could not read image'));
+        xhr.responseType = 'blob';
+        xhr.open('GET', avatarUri, true);
+        xhr.send(null);
+      });
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token ?? SUPABASE_ANON_KEY;
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error(`${xhr.status}: ${xhr.responseText}`));
+        };
+        xhr.onerror = () => reject(new Error('Network error during upload'));
+        xhr.open('POST', `${SUPABASE_URL}/storage/v1/object/avatars/${userId}`, true);
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        xhr.setRequestHeader('apikey', SUPABASE_ANON_KEY);
+        xhr.setRequestHeader('Content-Type', 'image/jpeg');
+        xhr.setRequestHeader('x-upsert', 'true');
+        xhr.send(blob);
+      });
+      return `${SUPABASE_URL}/storage/v1/object/public/avatars/${userId}`;
+    } catch (e: any) {
+      Alert.alert('Photo upload failed', e.message);
+      return null;
+    }
   }
 
   async function submit() {
@@ -35,16 +75,17 @@ export default function UsernameSetupScreen({ navigation }: Props) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setLoading(false); return; }
 
-    const { error } = await supabase.from('users').upsert({
-      id: user.id,
-      username,
-      is_live: false,
-    });
+    const avatarUrl = await uploadAvatar(user.id);
+
+    const payload: Record<string, any> = { id: user.id, username, is_live: false };
+    if (avatarUrl) payload.avatar_url = avatarUrl;
+
+    const { error } = await supabase.from('users').upsert(payload);
     setLoading(false);
     if (error) {
       Alert.alert('Error', error.message);
     } else {
-      navigation.replace('Main');
+      await supabase.auth.refreshSession();
     }
   }
 
@@ -56,21 +97,30 @@ export default function UsernameSetupScreen({ navigation }: Props) {
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
 
         <View style={styles.header}>
-          <Text style={styles.headerEmoji}>🐾</Text>
+          <LottieView
+            source={require('../../../assets/CatAnimation.json')}
+            autoPlay
+            loop
+            style={styles.lottie}
+          />
           <Text style={styles.headerTitle}>One last thing</Text>
           <Text style={styles.headerSub}>Choose how other cat lovers will know you</Text>
         </View>
 
         <View style={styles.body}>
-          {/* Profile picture placeholder */}
-          <View style={styles.avatarWrap}>
-            <View style={styles.avatar}>
-              <User size={32} color="#eab664" strokeWidth={1.5} />
-            </View>
+          {/* Profile picture */}
+          <TouchableOpacity style={styles.avatarWrap} onPress={pickAvatar} activeOpacity={0.8}>
+            {avatarUri ? (
+              <Image source={{ uri: avatarUri }} style={styles.avatar} />
+            ) : (
+              <View style={styles.avatarPlaceholder}>
+                <CameraIcon size={28} color="#eab664" strokeWidth={1.5} />
+              </View>
+            )}
             <View style={styles.cameraBtn}>
               <CameraIcon size={12} color="#fff9e8" strokeWidth={2} />
             </View>
-          </View>
+          </TouchableOpacity>
           <Text style={styles.avatarHint}>
             profile picture <Text style={styles.optional}>(optional)</Text>
           </Text>
@@ -93,7 +143,6 @@ export default function UsernameSetupScreen({ navigation }: Props) {
           </View>
           <Text style={styles.hint}>only letters, numbers and underscores</Text>
 
-          {/* Button */}
           <TouchableOpacity
             style={[styles.btn, !username && styles.btnDisabled]}
             onPress={submit}
@@ -117,20 +166,22 @@ const styles = StyleSheet.create({
 
   header: {
     backgroundColor: '#5e3620',
-    paddingTop: 36,
-    paddingBottom: 32,
+    paddingTop: 28,
+    paddingBottom: 28,
     alignItems: 'center',
   },
-  headerEmoji: { fontSize: 48, marginBottom: 12 },
-  headerTitle: { fontSize: 22, fontWeight: '500', color: '#fff9e8', letterSpacing: -0.3 },
+  lottie: { width: 140, height: 140 },
+  headerTitle: { fontSize: 22, fontWeight: '500', color: '#fff9e8', letterSpacing: -0.3, marginTop: -8 },
   headerSub: { fontSize: 13, color: '#eab664', marginTop: 6, textAlign: 'center', paddingHorizontal: 20 },
 
-  body: {
-    padding: 24,
-  },
+  body: { padding: 24 },
 
   avatarWrap: { alignSelf: 'center', marginBottom: 6, position: 'relative' },
   avatar: {
+    width: 90, height: 90, borderRadius: 45,
+    borderWidth: 2, borderColor: '#eab664',
+  },
+  avatarPlaceholder: {
     width: 90, height: 90, borderRadius: 45,
     backgroundColor: '#fff9e8', borderWidth: 2, borderColor: '#eab664',
     justifyContent: 'center', alignItems: 'center',

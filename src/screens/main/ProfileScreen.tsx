@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { LogOut, Pencil, Map, Bell, Info, Trash2, ChevronRight } from 'lucide-react-native';
+import { LogOut, Pencil, Map, Info, Trash2, ChevronRight } from 'lucide-react-native';
 import { supabase } from '../../lib/supabase';
 import type { ProfileStackParamList } from '../../types';
 import { Skeleton } from '../../components/Skeleton';
@@ -142,19 +142,22 @@ export default function ProfileScreen({ navigation }: Props) {
             <Text style={styles.liveTitle}>Live mode</Text>
             <Text style={styles.liveSub}>let others see your spots on the map</Text>
           </View>
-          <TouchableOpacity
-            style={[styles.toggleTrack, profile?.is_live && styles.toggleTrackOn]}
-            onPress={toggleLive}
-            activeOpacity={0.8}>
-            <View style={[styles.toggleKnob, profile?.is_live && styles.toggleKnobOn]} />
-          </TouchableOpacity>
+          {loading ? (
+            <Skeleton style={styles.toggleSkeleton} />
+          ) : (
+            <TouchableOpacity
+              style={[styles.toggleTrack, profile?.is_live && styles.toggleTrackOn]}
+              onPress={toggleLive}
+              activeOpacity={0.8}>
+              <View style={[styles.toggleKnob, profile?.is_live && styles.toggleKnobOn]} />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Menu */}
         <View style={styles.menuCard}>
           <MenuItem icon={<Pencil size={16} color="#5e3620" strokeWidth={1.8} />} label="Edit profile" onPress={() => navigation.navigate('EditProfile')} />
           <MenuItem icon={<Map size={16} color="#5e3620" strokeWidth={1.8} />} label="My cat map" onPress={() => navigation.navigate('CatMap')} />
-          <MenuItem icon={<Bell size={16} color="#5e3620" strokeWidth={1.8} />} label="Notifications" onPress={() => {}} />
           <MenuItem
             icon={<Info size={16} color="#5e3620" strokeWidth={1.8} />}
             label="About"
@@ -309,6 +312,7 @@ const styles = StyleSheet.create({
   liveText: { flex: 1 },
   liveTitle: { fontSize: 13, fontWeight: '500', color: '#fff9e8', marginBottom: 3 },
   liveSub: { fontSize: 11, color: '#c8b090' },
+  toggleSkeleton: { width: 46, height: 26, borderRadius: 13 },
   toggleTrack: {
     width: 46, height: 26, borderRadius: 13,
     backgroundColor: '#a09070', flexDirection: 'row',
